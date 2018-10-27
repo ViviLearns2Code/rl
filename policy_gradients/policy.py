@@ -256,7 +256,7 @@ class ProximalPolicyGradient():
                     env.render()
                 probs_pol, value = self.policy(torch.tensor(data=observation,dtype=torch.float32))
                 probs_pol_old, _ = self.policy_old(torch.tensor(data=observation,dtype=torch.float32))
-                action = torch.multinomial(input=probs_pol, num_samples=1)[0].numpy()
+                action = torch.multinomial(input=probs_pol_old, num_samples=1)[0].numpy()
                 observation, reward, done, _ = env.step(action)
                 # add to memory
                 rewards.append(torch.unsqueeze(torch.tensor(reward),0))
