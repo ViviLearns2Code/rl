@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import copy 
 
 class PolicyApprox(nn.Module):
     def __init__(self,dim_in,hidden,dim_out):
@@ -189,6 +190,7 @@ class PolicyGradient():
         probs = []
         rewards = []
         loss = 0
+
         for ep in range(self.max_e):
             probs.clear()
             rewards.clear()
@@ -202,16 +204,83 @@ class PolicyGradient():
                 probs.append(policy_probs[action]) #add to memory
                 observation, reward, done, _ = env.step(action)
                 rewards.append(reward) #add to memory
-                if done == True:
+                if done == True or t == self.max_t-1:
                     break
-            loss += self.loss(probs,rewards,self.gamma)/self.batch_size
+            loss += self.loss(probs,rewards,self.gamma)
             if ep % self.batch_size == 0:        
                 # gradient ascent
-                episode_length.append(t)
+                loss = loss/self.batch_size
                 loss.backward()
                 losses.append(loss.detach().numpy())
                 self.optimizer.step()
+                self.optimizer.zero_grad()               
                 loss = 0
-                self.optimizer.zero_grad()
+                episode_length.append(t)
+        env.close()
+        return losses, episode_length
+
+
+class ProximalPolicyGradient():
+    def __init__(self, policy_val_net, loss, optimizer, config):
+        self.max_e = config.get("max_episodes",1000)
+        self.max_t = config.get("max_timesteps",100)
+        self.batch_size = config.get("batch_size",1) 
+
+        self.policy = policy_val_net
+        #self.policy_old = policy_val_net_old
+        self.policy_old = copy.deepcopy(policy_val_net)
+        
+        self.loss = loss
+        self.optimizer = optimizer
+
+    def train(self, env, render=False):
+        rewards = []
+        probs = []
+        probs_old = []
+        values = []
+        loss = 0
+
+        episode_length = []
+        losses = []
+
+        for ep in range(self.max_e):
+            rewards.clear()
+            probs.clear()
+            probs_old.clear()
+            values.clear()
+            observation = env.reset()
+            #self.policy_old.load_state_dict(self.policy.state_dict())
+
+            for t in range(self.max_t):
+                if render == True:
+                    env.render()
+                probs_pol, value = self.policy(torch.tensor(data=observation,dtype=torch.float32))
+                probs_pol_old, _ = self.policy_old(torch.tensor(data=observation,dtype=torch.float32))
+                action = torch.multinomial(input=probs_pol, num_samples=1)[0].numpy()
+                observation, reward, done, _ = env.step(action)
+                # add to memory
+                rewards.append(torch.unsqueeze(torch.tensor(reward),0))
+                probs.append(torch.unsqueeze(probs_pol[[action]],0))
+                probs_old.append(torch.unsqueeze(probs_pol_old[action],0))
+                values.append(value)
+                if done == True or t == self.max_t-1:
+                    break
+            # calculate loss
+            probs_tensor = torch.cat(probs)
+            probs_old_tensor = torch.cat(probs_old)
+            rewards_tensor = torch.cat(rewards)
+            values_tensor = torch.cat(values)
+            loss += self.loss(probs=probs_tensor, probs_old=probs_old_tensor, rewards=rewards_tensor, values=values_tensor)
+            if ep % self.batch_size == 0:
+                # gradient ascent
+                #self.policy_old.load_state_dict(self.policy.state_dict())
+                self.policy_old = copy.deepcopy(self.policy)
+                loss = loss/self.batch_size
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()               
+                losses.append(loss.detach().numpy())
+                loss = 0
+                episode_length.append(t)
         env.close()
         return losses, episode_length
